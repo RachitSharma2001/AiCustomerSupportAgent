@@ -12,10 +12,15 @@ llm = ChatOllama(model="llama3.2")
 class State(TypedDict):
     query: str
     currentPlanningData: list[tuple[str, str]]
+    memory: list[tuple[str, str]]
     result: str
     response: Annotated[list[str], operator.add]
 
-available_actions = [("Retrieve", "Retrieve user information from the knowledge base. Pick this if we have not collected enough data to answer the question."), ("Generate", "Generate the final answer. Pick this once we have enough data to answer the final question.")]
+available_actions = [
+    ("Retrieve", "Retrieve user information from the knowledge base. Includes users name, age, etc."),
+    ("get_subscription_plan", "Retrieve the users subscription plan details, such as pricing, cadence, currency, etc."),
+    ("Generate", "Generate the final answer. Pick this once we have enough data to answer the final question.")
+]
 
 def planner(state: State):
     original_query = state["query"]
@@ -27,13 +32,22 @@ def planner(state: State):
             actions_executed.append(action)
 
     available_actions_str = ""
+    available_actions_list = []
     for action, description in available_actions:
         if action in actions_executed:
             continue
         available_actions_str += f"{action}: {description}\n"
+        available_actions_list.append(action)
+
+    memory_str = ""
+    if "memory" in state:
+        for prompt, response in state["memory"]:
+            memory_str += f"Prompt: {prompt}, Response: {response}\n"
 
     prompt = f"""
     You are a planner helping to answer the following question from customer: {original_query}
+
+    Here is the current conversation history: {memory_str}
 
     Here is the data that has already been collected:
     {dataStr}
@@ -44,28 +58,34 @@ def planner(state: State):
 
     Please return a JSON object with the following format:
     {{"action": "[name of action]"}}
-    ONLY return this object, don't return anything else. Note that the name of the action should only be one of the following: ["Retrieve", "Generate"]. DO NOT PICK ANY ACTION ALREADY EXECUTED. These are the actions that have already been executed: {actions_executed}
+    ONLY return this object, don't return anything else. Note that the name of the action SHOULD ONLY BE ONE OF THE FOLLOWING: {available_actions_list}. DO NOT PICK ANY ACTION THAT IS NOT PART OF THIS LIST.
 
     Remember, ONLY return the json object. DO NOT RETURN ANYTHING ELSE.
     """
+    print(prompt)
     response = llm.invoke(prompt)
     return {
         "response": [response.content]
     }
 
 def retrieve():
-    return f"""Subscription plan: $190 per month"""
+    return f"""{{"user_name": "Rachit Sharma", "user_age": 24}}"""
+
+def get_subscription_plan():
+    return {"plan_name": "Premium", "plan_price": 9.99, "cadence": "monthly", "plan_currency": "USD"}
 
 def generate_final_answer():
     print("generate final answer called!")
 
-actionToFunction = {"Retrieve": retrieve, "Generate": generate_final_answer}
+actionToFunction = {"Retrieve": retrieve, "get_subscription_plan": get_subscription_plan, "Generate": generate_final_answer}
 def executor(state: State):
     print(state["response"][-1])
     response = json.loads(state["response"][-1])
     action_name = response["action"]
     if action_name == "Generate":
         state["result"] = "done"
+        return state
+    if action_name not in actionToFunction:
         return state
     f = actionToFunction[action_name]
     data = f()
@@ -107,9 +127,17 @@ graph.add_edge("planner", "executor")
 graph.add_conditional_edges("executor", route_after_executor, {"planner": "planner", "answerer": "answerer"})
 graph.add_edge("answerer", END)
 app = graph.compile()
-result = app.invoke({
-    "query": "How much money am I currently being charged for my subscription?"
-})
-print(result["response"][-1])
+
+memory = []
+prompts = ["What is the user data that you are storing for me?", "How much money am I currently being charged for my subscription?"]
+for prompt in prompts:
+    result = app.invoke({
+        "query": prompt,
+        "memory": memory
+    })
+    resp = result["response"][-1]
+    print(resp)
+    memory.append((prompt, resp))
+
 
 
