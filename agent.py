@@ -62,7 +62,6 @@ def planner(state: State):
 
     Remember, ONLY return the json object. DO NOT RETURN ANYTHING ELSE.
     """
-    print(prompt)
     response = llm.invoke(prompt)
     return {
         "response": [response.content]
@@ -74,12 +73,9 @@ def retrieve():
 def get_subscription_plan():
     return {"plan_name": "Premium", "plan_price": 9.99, "cadence": "monthly", "plan_currency": "USD"}
 
-def generate_final_answer():
-    print("generate final answer called!")
 
-actionToFunction = {"Retrieve": retrieve, "get_subscription_plan": get_subscription_plan, "Generate": generate_final_answer}
+actionToFunction = {"Retrieve": retrieve, "get_subscription_plan": get_subscription_plan}
 def executor(state: State):
-    print(state["response"][-1])
     response = json.loads(state["response"][-1])
     action_name = response["action"]
     if action_name == "Generate":
@@ -100,8 +96,16 @@ def answerer(state: State):
     if "currentPlanningData" in state:
         for action, result in state["currentPlanningData"]:
             dataStr += f"{result}\n"
+
+    memory_str = ""
+    if "memory" in state:
+        for prompt, response in state["memory"]:
+            memory_str += f"Prompt: {prompt}, Response: {response}\n"
+
     prompt = f"""
     You are a customer support agent answering this question from a user: {state['query']}
+
+    Here is the current conversation history: {memory_str}
 
     Here is the data that has been collected: {dataStr}
 
@@ -131,12 +135,14 @@ app = graph.compile()
 memory = []
 prompts = ["What is the user data that you are storing for me?", "How much money am I currently being charged for my subscription?"]
 for prompt in prompts:
+    print(f"Prompt: {prompt}")
     result = app.invoke({
         "query": prompt,
         "memory": memory
     })
     resp = result["response"][-1]
-    print(resp)
+    print(f"Response: {resp}")
+
     memory.append((prompt, resp))
 
 
